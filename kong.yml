@@ -1,0 +1,44 @@
+_format_version: "2.1"
+
+services:
+  - name: app-be-home
+    url: http://app-be:8081/
+    routes:
+      - name: home-route
+        paths:
+          - /home
+
+  - name: app-be-offer
+    url: http://app-be:8081/offer
+    routes:
+      - name: offers-route
+        paths:
+          - /offer
+
+  - name: app-be-user
+    url: http://app-be:8081/user
+    routes:
+      - name: users-route
+        paths:
+          - /user
+
+  - name: app-be-interest
+    url: http://app-be:8081/interest
+    routes:
+      - name: interests-route
+        paths:
+          - /interest
+
+  - name: app-be-category
+    url: http://app-be:8081/category
+    routes:
+      - name: categories-route
+        paths:
+          - /category
+
+  - name: app-be-auth0
+    url: http://app-be:8081/auth0
+    routes:
+      - name: auth0-route
+        paths:
+          - /auth0

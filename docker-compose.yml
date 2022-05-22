@@ -1,0 +1,211 @@
+version: "3.8"
+# Define services
+services:
+  # App backend service
+  app-be:
+    # Configuration for building the docker image for the backend service
+    build:
+      context: be # Use an image built from the specified dockerfile in the `polling-app-server` directory.
+      dockerfile: Dockerfile
+    logging:
+      driver: loki
+      options:
+        loki-url: http://host.docker.internal:3100/loki/api/v1/push
+        loki-external-labels: job=myjob,owner=adelina,environment=development
+    ports:
+      - 8081:8081 # Forward the exposed port 8080 on the container to port 8080 on the host machine
+    restart: always
+    depends_on:
+      - db # This service depends on mysql. Start that first.
+      - rabbitmq
+    environment: # Pass environment variables to the service
+
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/pweb
+      SPRING_DATASOURCE_USERNAME: springuser
+      SPRING_DATASOURCE_PASSWORD: ThePassword
+    networks: # Networks to join (Services on the same network can communicate with each other using their name)
+      - backend
+      - frontend
+      - monitoring
+      - logging
+      - rmq
+
+  mail-sender:
+    # Configuration for building the docker image for the backend service
+    build:
+      context: email-service # Use an image built from the specified dockerfile in the `polling-app-server` directory.
+      dockerfile: Dockerfile
+    logging:
+      driver: loki
+      options:
+        loki-url: http://host.docker.internal:3100/loki/api/v1/push
+        loki-external-labels: job=myjob,owner=adelina,environment=development
+    ports:
+      - 8082:8082 # Forward the exposed port 8080 on the container to port 8080 on the host machine
+    restart: always
+    depends_on:
+      - rabbitmq
+    networks: # Networks to join (Services on the same network can communicate with each other using their name)
+      - backend
+      - frontend
+      - monitoring
+      - logging
+      - rmq
+
+  # Frontend Service
+  app-fe:
+    build:
+      context: frontend-pweb # Use an image built from the specified dockerfile in the `polling-app-client` directory.
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_API_BASE_URL: http://127.0.0.1:8081/
+    ports:
+      - "3000:80" # Forward the exposed port 80 on the container to port 80 on the host machine
+    restart: always
+    depends_on:
+      - app-be
+    networks:
+      - frontend
+
+  # Database Service (Mysql)
+  db:
+    image: mysql
+    ports:
+      - "3307:3306"
+    restart: always
+    environment:
+      MYSQL_DATABASE: pweb
+      MYSQL_USER: springuser
+      MYSQL_PASSWORD: ThePassword
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - db-data:/var/lib/mysql
+    networks:
+      - backend
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - 9090:9090
+    networks:
+      - monitoring
+      - visualizing
+
+  node_exporter:
+    image: prom/node-exporter
+    deploy:
+      mode: global
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+      - 9100:9100
+    networks:
+      - monitoring
+
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    deploy:
+      mode: global
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk:/dev/disk/:ro
+    ports:
+      - 8080:8080
+    networks:
+      - monitoring
+
+
+  loki:
+    image: grafana/loki
+    volumes:
+      - ./loki.yml:/etc/config/loki.yml
+      - ./wal:/wal
+    entrypoint:
+      - /usr/bin/loki
+      - -config.file=/etc/config/loki.yml
+    ports:
+      - 3100:3100
+    networks:
+      - logging
+      - visualizing
+
+  grafana:
+    image: grafana/grafana
+    volumes:
+      - grafana-volume:/var/lib/grafana
+    ports:
+      - 3001:3000
+    depends_on:
+      - loki
+    deploy:
+      placement:
+        constraints: [ node.role == manager ]
+    networks:
+      - visualizing
+
+  rabbitmq:
+    image: rabbitmq:management-alpine
+    container_name: "rabbitmq"
+    hostname: "albatross"
+    restart: "no"
+    environment:
+      RABBITMQ_DEFAULT_USER: "rabbitmq"
+      RABBITMQ_DEFAULT_PASS: "rabbitmq"
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - rmq
+
+  kong:
+    image: kong:latest
+    volumes:
+      - ./kong.yml:/usr/local/kong/declarative/kong.yml
+      - ./wal:/wal
+    environment:
+      KONG_DATABASE: 'off' #obligatoriu, daca se vrea modul DB-less
+      KONG_DECLARATIVE_CONFIG: /usr/local/kong/declarative/kong.yml #trebuie specificat unde anume se va gasi fisierul de configurare
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001, 0.0.0.0:8444 ssl
+    ports:
+      - 8000:8000 #expunerea porturilor
+      - 8443:8443
+      - 127.0.0.1:8001:8001
+      - 127.0.0.1:8444:8444
+    deploy:
+      placement:
+        constraints: [ node.role == manager ] #constrangerea de rulare doar pe master, pentru a nu exista conflict la nivel de volume
+    networks:
+      - backend
+
+
+# Volumes
+volumes:
+  db-data:
+  grafana-volume:
+
+# Networks to be created to facilitate communication between containers
+networks:
+  backend:
+  frontend:
+  monitoring:
+  logging:
+  visualizing:
+  rmq:
+
